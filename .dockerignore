@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+.uv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Project specific
+test_messages/
+messages/
+*.json.bak
+
+# Documentation
+*.md
+!README.md
+
+# Cache
+.cache/
+*.log
+
+# Claude
+.claude/
