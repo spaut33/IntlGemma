@@ -1,6 +1,6 @@
 # Translation Validation
 
-TranslateGemma validates each translated string before writing it to disk.
+IntlGemma validates each translated string before writing it to disk.
 This helps preserve placeholders and ICU syntax.
 
 ## What is checked

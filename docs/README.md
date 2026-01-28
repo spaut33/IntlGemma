@@ -1,6 +1,6 @@
 # Documentation
 
-Short docs for TranslateGemma CLI.
+Short docs for IntlGemma CLI.
 
 ## Start Here
 - [QUICKSTART.md](QUICKSTART.md) - Fast start for Docker and local runs.

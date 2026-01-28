@@ -1,6 +1,6 @@
 # Docker Usage
 
-Run TranslateGemma CLI in a container with GPU support.
+Run IntlGemma CLI in a container with GPU support.
 
 ## Requirements
 
