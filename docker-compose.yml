@@ -1,30 +1,11 @@
 services:
-  # API Server (Flask)
-  api:
-    build: .
-    container_name: translategemma-api
-    ports:
-      - "5000:5000"
-    volumes:
-      - ~/.cache/huggingface:/root/.cache/huggingface
-    command: ["uv", "run", "python", "api.py"]
-    shm_size: '2gb'
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    restart: unless-stopped
-
   # CLI for translations (interactive)
   cli:
     build: .
     container_name: translategemma-cli
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
-      - ./messages:/app/messages  # Mount your messages directory
+      - ./messages:/app/messages # Mount your messages directory
     shm_size: '2gb'
     deploy:
       resources:
@@ -32,10 +13,6 @@ services:
           devices:
             - driver: nvidia
               count: all
-              capabilities: [gpu]
-    # Override with actual command when running
-    # Example: docker compose run cli translate-intl translate-missing ./messages -t ru
-    entrypoint: ["uv", "run"]
-    command: ["translate-intl", "--help"]
-    profiles:
-      - cli  # Only start with --profile cli
+              capabilities: [ gpu ]
+    # Example usage: docker compose run cli translate-intl translate-missing ./messages -t ru
+    command: [ "translate-intl", "--help" ]

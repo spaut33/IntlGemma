@@ -116,11 +116,11 @@ class TranslationFileService:
             FileNotFoundError: If source or target file not found
         """
         source_file = self.load_language_file(source_lang)
-        source_data_flat = flatten_dict(source_file.data)
+        source_data_flat = flatten_dict(source_file.data, nested=source_file.is_nested)
         
         try:
             target_file = self.load_language_file(target_lang)
-            target_data_flat = flatten_dict(target_file.data)
+            target_data_flat = flatten_dict(target_file.data, nested=source_file.is_nested)
         except FileNotFoundError:
             # Target file doesn't exist - all keys are missing
             source_keys = sorted(source_data_flat.keys())
@@ -141,13 +141,16 @@ class TranslationFileService:
             total_keys=len(source_data_flat)
         )
 
-    def get_value_by_flat_key(self, data: dict[str, Any], flat_key: str) -> Any:
+    def get_value_by_flat_key(
+        self, data: dict[str, Any], flat_key: str, nested: bool = True
+    ) -> Any:
         """
         Get value from nested dict using flat key.
 
         Args:
             data: Nested dictionary
             flat_key: Dot-separated key (e.g., 'auth.login.title')
+            nested: Whether to treat key as a nested path
 
         Returns:
             Value at the specified path
@@ -155,10 +158,10 @@ class TranslationFileService:
         Raises:
             KeyError: If key not found
         """
-        return get_nested_value(data, flat_key)
+        return get_nested_value(data, flat_key, nested=nested)
 
     def set_value_by_flat_key(
-        self, data: dict[str, Any], flat_key: str, value: Any
+        self, data: dict[str, Any], flat_key: str, value: Any, nested: bool = True
     ) -> dict[str, Any]:
         """
         Set value in nested dict using flat key (immutable).
@@ -167,8 +170,9 @@ class TranslationFileService:
             data: Nested dictionary
             flat_key: Dot-separated key
             value: Value to set
+            nested: Whether to treat key as a nested path
 
         Returns:
             New dictionary with updated value
         """
-        return set_nested_value(data, flat_key, value)
+        return set_nested_value(data, flat_key, value, nested=nested)

@@ -1,13 +1,12 @@
-"""TranslateGemma translation engine with batch processing."""
-
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
-import torch
+import llama_cpp
+from huggingface_hub import hf_hub_download
+from llama_cpp import Llama
 from rich.console import Console
-from rich.spinner import Spinner
-from transformers import AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 
 from .config import TranslatorConfig
 
@@ -35,16 +34,13 @@ class TranslateGemmaEngine:
         self._model_loaded = False
 
     def _setup_device(self) -> None:
-        """Setup CUDA/CPU device and enable optimizations."""
+        """Setup device configuration."""
         if self.config.device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            # llama-cpp-python handles device selection based on how it was compiled
+            # and n_gpu_layers parameter.
+            self.device = "cuda" if llama_cpp.llama_supports_gpu_offload() else "cpu"
         else:
             self.device = self.config.device
-
-        # Enable TF32 optimizations for RTX 30xx/40xx series
-        if self.device == "cuda" and self.config.enable_tf32:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
 
     def load_model(self, show_progress: bool = True) -> None:
         """
@@ -68,73 +64,106 @@ class TranslateGemmaEngine:
 
         if show_progress:
             device_info = self.get_device_info()
-            console.print(
-                f"[green]✓[/green] Model loaded on {device_info['device']}"
-                + (
-                    f" ({device_info['gpu_name']}, {device_info['vram_total_gb']:.1f}GB)"
-                    if device_info["cuda_available"]
-                    else ""
-                )
-            )
+            status = " (GPU acceleration enabled)" if device_info["cuda_available"] else " (CPU mode)"
+            console.print(f"[green]✓[/green] Model loaded on {device_info['device']}{status}")
 
     def _load_model_internal(self) -> None:
-        """Internal model loading logic."""
-        self.processor = AutoProcessor.from_pretrained(
-            self.config.model_id, cache_dir=self.config.cache_dir, use_fast=True
+        """Internal model loading logic with GGUF downloading."""
+        # Download model from Hugging Face if not present
+        model_path = hf_hub_download(
+            repo_id=self.config.gguf_model_id,
+            filename=self.config.gguf_filename,
+            cache_dir=self.config.cache_dir,
         )
 
-        # Configure quantization
-        quantization_config = None
-        if self.device == "cuda" and self.config.quantization:
-            if self.config.quantization == "4bit":
-                quantization_config = BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_compute_dtype=self.config.torch_dtype,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_use_double_quant=True,
-                )
-                console.print("[dim]Using 4-bit quantization[/dim]")
-            elif self.config.quantization == "8bit":
-                quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-                console.print("[dim]Using 8-bit quantization[/dim]")
-
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            self.config.model_id,
-            dtype=self.config.torch_dtype,
-            device_map="auto",
-            low_cpu_mem_usage=True,
-            cache_dir=self.config.cache_dir,
-            quantization_config=quantization_config,
+        # Initialize llama.cpp model
+        self.model = Llama(
+            model_path=model_path,
+            n_gpu_layers=self.config.n_gpu_layers,
+            n_ctx=self.config.n_ctx,
+            verbose=False,
         )
 
     def _has_placeholders(self, text: str) -> bool:
-        """Check if text contains {placeholders}."""
-        return bool(re.search(r"\{[^}]+\}", text))
+        """Check if text contains any placeholders or technical-looking strings."""
+        # Broad detection for curly braces (placeholders/logic)
+        if "{" in text and "}" in text:
+            return True
+        # Detection for technical identifiers (snake_case, camelCase, dotted.names, or underscored)
+        if re.search(r"\b[a-z0-9]+(?:[._][a-z0-9]+)+\b", text): # snake_case or dotted
+            return True
+        if re.search(r"\b[a-z0-9]+[A-Z][a-z0-9]+\b", text): # camelCase
+            return True
+        if "<0>" in text or "</0>" in text: # Rich text tags
+            return True
+        return False
 
-    def _prepare_text_with_instructions(self, text: str) -> str:
-        """
-        Prepare text with instructions to preserve placeholders.
+    def _prepare_prompt(self, text: str, source_lang: str, target_lang: str) -> str:
+        """Prepare prompt for GGUF model in the expected format recommended by Ollama."""
+        from .languages import get_language_name
+        
+        source_name = get_language_name(source_lang)
+        target_name = get_language_name(target_lang)
 
-        If text contains {placeholders}, add instruction to preserve them.
-        Otherwise, return text as-is.
+        # Official prompt format from https://ollama.com/library/translategemma
+        
+        rules = []
+        if "{{" in text:
+            rules.append("- CRITICAL: Keep all {{variable}} placeholders EXACTLY as they are. DO NOT translate the word inside the double braces. DO NOT change double braces to single braces.")
+        elif "{" in text:
+            rules.append("- CRITICAL: Keep all {variable} or {logic} blocks EXACTLY as they are. DO NOT translate anything inside curly braces.")
+        
+        if "<" in text and ">" in text:
+            rules.append("- PRESERVE all rich text tags (e.g., <0>, </0>, <br/>) exactly as they are.")
 
-        Args:
-            text: Original text
+        # Identification of technical IDs
+        if re.search(r"\b[a-z0-9]*_[a-z0-9_]+\b", text) or re.search(r"\b[a-z]+[A-Z][a-z0-9]+\b", text):
+            rules.append("- TECHNICAL IDS: Keep identifiers like snake_case, camelCase, or names_with_underscores in their original English technical format. They are system IDs, not natural language.")
 
-        Returns:
-            Text with instructions if needed
-        """
-        if not self._has_placeholders(text):
-            return text
+        rules_instruction = ""
+        if rules:
+            rules_instruction = (
+                "### STRICT PRESERVATION RULES:\n" + 
+                "\n".join(rules) + 
+                "\n\n### EXAMPLE OF PRESERVATION:\n"
+                "- Source: 'Settings for {{remote_server}}'\n"
+                "- Translation: 'Настройки для {{remote_server}}' (KEEP THE ID)\n\n"
+            )
 
-        # Add clear instruction to preserve placeholders
-        instruction = (
-            "[IMPORTANT: Keep all {placeholders} EXACTLY as they are. "
-            "Do NOT translate words inside {curly braces}. "
-            "Translate only the text outside placeholders.]\n\n"
+        # Add punctuation and formatting rules
+        punctuation_rule = "- PUNCTUATION: DO NOT add a period at the end of the translation if it's missing in the source text. If the source text ends with a period, the translation MUST end with one."
+        control_chars_rule = "- FORMATTING: PRESERVE all control characters like newlines (\\n) and tabs (\\t) exactly as they appear in the source text."
+
+        # Add glossary rules
+        glossary_instruction = ""
+        if self.config.glossary:
+            relevant_terms = {}
+            for term, translation in self.config.glossary.items():
+                if re.search(rf"\b{re.escape(term)}\b", text, re.IGNORECASE):
+                    relevant_terms[term] = translation
+            
+            if relevant_terms:
+                glossary_list = "\n".join([f"- '{term}' -> '{trans}'" for term, trans in relevant_terms.items()])
+                glossary_instruction = f"### GLOSSARY (Use these specific translations):\n{glossary_list}\n\n"
+
+        prompt_text = (
+            f"You are a professional technical localization engine translating from {source_name} to {target_name}. "
+            f"Your goal is to translate the natural language content while preserving all technical structures, variables, and IDs.\n\n"
+            f"{rules_instruction}"
+            f"{glossary_instruction}"
+            f"### FORMATTING RULES:\n"
+            f"{punctuation_rule}\n"
+            f"{control_chars_rule}\n\n"
+            f"Please translate the following {source_name} text into {target_name}. Return ONLY the translation:\n\n"
+            f"{text}"
         )
-
-        return instruction + text
+        
+        # Wrap in Gemma-it chat template for GGUF
+        return (
+            f"<start_of_turn>user\n"
+            f"{prompt_text}<end_of_turn>\n"
+            f"<start_of_turn>model\n"
+        )
 
     def translate(
         self,
@@ -144,64 +173,30 @@ class TranslateGemmaEngine:
         max_tokens: Optional[int] = None,
     ) -> str:
         """
-        Translate single text.
-
-        Args:
-            text: Text to translate
-            source_lang: Source language code (e.g., 'en')
-            target_lang: Target language code (e.g., 'ru')
-            max_tokens: Maximum tokens to generate (uses config default if None)
-
-        Returns:
-            Translated text
-
-        Raises:
-            RuntimeError: If model not loaded
+        Translate single text using GGUF engine.
         """
         if not self._model_loaded:
             self.load_model(show_progress=False)
 
         max_tokens = max_tokens or self.config.max_new_tokens
+        prompt = self._prepare_prompt(text, source_lang, target_lang)
 
-        # Add instructions for preserving placeholders if found
-        prepared_text = self._prepare_text_with_instructions(text)
+        response = self.model(
+            prompt,
+            max_tokens=max_tokens,
+            stop=["<end_of_turn>", "\n\n"],
+            echo=False,
+            temperature=0.1,
+        )
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "source_lang_code": source_lang,
-                        "target_lang_code": target_lang,
-                        "text": prepared_text,
-                    }
-                ],
-            }
-        ]
-
-        inputs = self.processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(self.device, dtype=self.config.torch_dtype)
-
-        input_len = len(inputs["input_ids"][0])
-
-        with torch.inference_mode():
-            generation = self.model.generate(
-                **inputs,
-                max_new_tokens=max_tokens,
-                do_sample=False,
-                use_cache=True,
-            )
-
-        generation = generation[0][input_len:]
-        translation = self.processor.decode(generation, skip_special_tokens=True)
-
-        return translation.strip()
+        translation = response["choices"][0]["text"].strip()
+        
+        # Restore leading/trailing whitespace if original had it
+        # This ensures \n at start/end is preserved if the model didn't include it in the stripped version
+        leading_ws = re.match(r"^\s*", text).group(0)
+        trailing_ws = re.search(r"\s*$", text).group(0)
+        
+        return f"{leading_ws}{translation}{trailing_ws}"
 
     def translate_batch(
         self,
@@ -211,150 +206,16 @@ class TranslateGemmaEngine:
         max_tokens: Optional[int] = None,
     ) -> list[str]:
         """
-        Translate multiple texts in batch for efficiency.
-
-        Combines texts into single prompt to reduce GPU overhead.
-        Automatically splits into chunks if exceeding context limit.
-
-        Args:
-            texts: List of texts to translate
-            source_lang: Source language code
-            target_lang: Target language code
-            max_tokens: Maximum tokens per generation
-
-        Returns:
-            List of translated texts (same order as input)
-
-        Raises:
-            RuntimeError: If model not loaded
+        Translate multiple texts. GGUF works best with sequential processing 
+        unless using specialized batching servers.
         """
-        if not self._model_loaded:
-            self.load_model(show_progress=False)
-
-        if not texts:
-            return []
-
-        if len(texts) == 1:
-            return [self.translate(texts[0], source_lang, target_lang, max_tokens)]
-
-        max_tokens = max_tokens or self.config.max_new_tokens
-
-        # Check if any text has placeholders
-        has_any_placeholders = any(self._has_placeholders(t) for t in texts)
-
-        # Build batch prompt with numbered entries
-        batch_prompt_parts = []
-
-        # Add instruction if any text has placeholders
-        if has_any_placeholders:
-            batch_prompt_parts.append(
-                "[IMPORTANT: Keep all {placeholders} EXACTLY as they are. "
-                "Do NOT translate words inside {curly braces}. "
-                "Translate only the text outside placeholders.]\n"
-            )
-
-        batch_prompt_parts.append("Translate the following texts:")
-        for i, text in enumerate(texts, 1):
-            batch_prompt_parts.append(f"{i}. {text}")
-
-        batch_prompt = "\n".join(batch_prompt_parts)
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "source_lang_code": source_lang,
-                        "target_lang_code": target_lang,
-                        "text": batch_prompt,
-                    }
-                ],
-            }
-        ]
-
-        try:
-            inputs = self.processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                add_generation_prompt=True,
-                return_dict=True,
-                return_tensors="pt",
-            ).to(self.device, dtype=self.config.torch_dtype)
-
-            input_len = len(inputs["input_ids"][0])
-
-            # Check context limit (20000 tokens for TranslateGemma)
-            if input_len > 18000:  # Leave room for generation
-                # Split batch and retry recursively
-                mid = len(texts) // 2
-                left_results = self.translate_batch(
-                    texts[:mid], source_lang, target_lang, max_tokens
-                )
-                right_results = self.translate_batch(
-                    texts[mid:], source_lang, target_lang, max_tokens
-                )
-                return left_results + right_results
-
-            with torch.inference_mode():
-                generation = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_tokens * len(texts),  # More tokens for batch
-                    do_sample=False,
-                    use_cache=True,
-                )
-
-            generation = generation[0][input_len:]
-            result = self.processor.decode(generation, skip_special_tokens=True)
-
-            # Parse numbered results
-            translations = self._parse_batch_result(result, len(texts))
-
-            # Fallback: if parsing failed, translate individually
-            if len(translations) != len(texts):
-                translations = [
-                    self.translate(text, source_lang, target_lang, max_tokens)
-                    for text in texts
-                ]
-
-            return translations
-
-        except Exception as e:
-            # Fallback to individual translation on batch error
-            console.print(
-                f"[yellow]Warning: Batch translation failed ({e}), "
-                f"falling back to individual translation[/yellow]"
-            )
-            return [
-                self.translate(text, source_lang, target_lang, max_tokens) for text in texts
-            ]
+        results = []
+        for text in texts:
+            results.append(self.translate(text, source_lang, target_lang, max_tokens))
+        return results
 
     def _parse_batch_result(self, result: str, expected_count: int) -> list[str]:
-        """
-        Parse batch translation result with numbered entries.
-
-        Args:
-            result: Model output with numbered translations
-            expected_count: Expected number of translations
-
-        Returns:
-            List of parsed translations
-        """
-        lines = result.strip().split("\n")
-        translations = []
-
-        for line in lines:
-            line = line.strip()
-            # Match lines like "1. Translation" or "1) Translation"
-            if line and (line[0].isdigit() or line.startswith("1")):
-                # Remove number prefix
-                parts = line.split(".", 1) if "." in line else line.split(")", 1)
-                if len(parts) == 2:
-                    translations.append(parts[1].strip())
-                else:
-                    translations.append(line)
-
-        return translations[:expected_count]
+        return []
 
     def get_device_info(self) -> dict:
         """
@@ -363,24 +224,23 @@ class TranslateGemmaEngine:
         Returns:
             Dictionary with device information
         """
+        gpu_supported = llama_cpp.llama_supports_gpu_offload()
+        
         info = {
             "device": self.device or "not_initialized",
-            "cuda_available": torch.cuda.is_available(),
+            "cuda_available": gpu_supported,
         }
 
-        if torch.cuda.is_available():
-            info.update(
-                {
-                    "gpu_name": torch.cuda.get_device_name(0),
-                    "vram_total_gb": torch.cuda.get_device_properties(0).total_memory
-                    / 1024**3,
-                    "vram_allocated_gb": torch.cuda.memory_allocated(0) / 1024**3,
-                }
-            )
+        if gpu_supported and self.model:
+            # We can get some info from llama.cpp but it's more limited without torch
+            info.update({
+                "gpu_support": "Yes (llama-cpp-python with CUDA/Metal/etc.)",
+                "n_gpu_layers": self.config.n_gpu_layers
+            })
 
         return info
 
     def __del__(self):
-        """Clean up GPU resources."""
-        if torch.cuda.is_available() and self._model_loaded:
-            torch.cuda.empty_cache()
+        """Clean up resources."""
+        # llama-cpp handles its own cleanup, but we can clear the model ref
+        self.model = None

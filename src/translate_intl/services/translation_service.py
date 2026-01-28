@@ -1,5 +1,6 @@
 """Translation service orchestrating file operations and model inference."""
 
+import json
 import time
 from pathlib import Path
 from typing import Optional
@@ -36,12 +37,29 @@ class TranslationService:
         self.file_service = TranslationFileService(messages_dir)
         self.translator = TranslateGemmaEngine(translator_config)
 
+    def load_glossary(self, glossary_path: Path) -> None:
+        """
+        Load glossary from a JSON file.
+
+        Args:
+            glossary_path: Path to glossary JSON file
+        """
+        try:
+            with open(glossary_path, "r", encoding="utf-8") as f:
+                glossary = json.load(f)
+            self.translator.config.glossary = glossary
+            console.print(f"[green]✓[/green] Loaded glossary with {len(glossary)} terms")
+        except Exception as e:
+            console.print(f"[red]Error loading glossary from {glossary_path}: {e}[/red]")
+
     def translate_all(
         self,
         source_lang: str,
         target_langs: list[str],
         max_tokens: int = 200,
         batch_size: int = 20,
+        nested: Optional[bool] = None,
+        glossary_path: Optional[Path] = None,
     ) -> None:
         """
         Translate all keys to target languages.
@@ -51,12 +69,21 @@ class TranslationService:
             target_langs: List of target language codes
             max_tokens: Maximum tokens per generation
             batch_size: Number of texts to translate in one batch
+            nested: Whether to use nested structure (False for flat). If None, auto-detected.
+            glossary_path: Path to glossary JSON file (optional)
         """
+        if glossary_path:
+            self.load_glossary(glossary_path)
+
         # Load model once for all languages
         self.translator.load_model(show_progress=True)
 
         source_file = self.file_service.load_language_file(source_lang)
-        flat_source = flatten_dict(source_file.data)
+        
+        # Use provided nested flag or auto-detect from source
+        is_nested = nested if nested is not None else source_file.is_nested
+        
+        flat_source = flatten_dict(source_file.data, nested=is_nested)
         all_keys = list(flat_source.keys())
 
         for target_lang in target_langs:
@@ -68,6 +95,7 @@ class TranslationService:
                 source_data=source_file.data,
                 max_tokens=max_tokens,
                 batch_size=batch_size,
+                nested=is_nested,
             )
 
     def translate_missing(
@@ -76,6 +104,8 @@ class TranslationService:
         target_langs: list[str],
         max_tokens: int = 200,
         batch_size: int = 20,
+        nested: Optional[bool] = None,
+        glossary_path: Optional[Path] = None,
     ) -> None:
         """
         Translate only missing keys to target languages.
@@ -85,11 +115,19 @@ class TranslationService:
             target_langs: List of target language codes
             max_tokens: Maximum tokens per generation
             batch_size: Number of texts to translate in one batch
+            nested: Whether to use nested structure (False for flat). If None, auto-detected.
+            glossary_path: Path to glossary JSON file (optional)
         """
+        if glossary_path:
+            self.load_glossary(glossary_path)
+
         # Load model once for all languages
         self.translator.load_model(show_progress=True)
 
         source_file = self.file_service.load_language_file(source_lang)
+        
+        # Use provided nested flag or auto-detect from source
+        is_nested = nested if nested is not None else source_file.is_nested
 
         for target_lang in target_langs:
             console.print(f"\n[bold cyan]Checking {target_lang}...[/bold cyan]")
@@ -112,6 +150,7 @@ class TranslationService:
                 source_data=source_file.data,
                 max_tokens=max_tokens,
                 batch_size=batch_size,
+                nested=is_nested,
             )
 
     def _translate_language(
@@ -122,6 +161,7 @@ class TranslationService:
         source_data: dict,
         max_tokens: int,
         batch_size: int,
+        nested: bool = True,
     ) -> None:
         """
         Translate keys for a single language with batch processing.
@@ -133,6 +173,7 @@ class TranslationService:
             source_data: Source language nested data
             max_tokens: Maximum tokens per generation
             batch_size: Batch size for translation
+            nested: Whether to use nested structure
         """
         if not keys_to_translate:
             return
@@ -145,7 +186,7 @@ class TranslationService:
             target_file = self.file_service.create_language_file(target_lang)
             target_data = {}
 
-        flat_source = flatten_dict(source_data)
+        flat_source = flatten_dict(source_data, nested=nested)
         start_time = time.time()
         translated_count = 0
 
@@ -175,6 +216,7 @@ class TranslationService:
                             original, translation, strict=False
                         )
 
+                        value_to_save = translation
                         if not validation.is_valid:
                             # Log validation error
                             error_msg = format_validation_error(
@@ -182,17 +224,15 @@ class TranslationService:
                             )
                             console.print(f"[yellow]⚠ {error_msg}[/yellow]")
 
-                            # Use original as fallback for critical errors
                             if validation.errors:
                                 console.print(
-                                    f"[red]  Skipping invalid translation for '{key}'[/red]"
+                                    f"[red]  Validation errors found for '{key}'. Using original text as fallback.[/red]"
                                 )
-                                progress.update(task, advance=1)
-                                continue
+                                value_to_save = original
 
-                        # Update target data with validated translation
+                        # Update target data
                         target_data = self.file_service.set_value_by_flat_key(
-                            target_data, key, translation
+                            target_data, key, value_to_save, nested=nested
                         )
                         translated_count += 1
 
@@ -213,7 +253,10 @@ class TranslationService:
         print_translation_summary(target_lang, translated_count, len(keys_to_translate), elapsed_time)
 
     def check_completeness(
-        self, source_lang: str, target_langs: list[str]
+        self,
+        source_lang: str,
+        target_langs: list[str],
+        nested: Optional[bool] = None,
     ) -> list[MissingKeysReport]:
         """
         Check translation completeness without translating.
@@ -221,13 +264,17 @@ class TranslationService:
         Args:
             source_lang: Source language code
             target_langs: List of target language codes
-
-        Returns:
-            List of MissingKeysReport for each target language
+            nested: Whether to use nested structure. If None, auto-detected.
         """
         reports = []
-
+        source_file = self.file_service.load_language_file(source_lang)
+        # We don't strictly need nested here because find_missing_keys handles it,
+        # but it's good for consistency if we want to override it.
+        # Actually file_service.find_missing_keys needs to be updated too if we want to override.
+        
         for target_lang in target_langs:
+            # TODO: find_missing_keys currently doesn't accept nested override, 
+            # it always uses source_file.is_nested. This is likely what we want anyway.
             report = self.file_service.find_missing_keys(source_lang, target_lang)
             reports.append(report)
 

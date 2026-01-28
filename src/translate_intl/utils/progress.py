@@ -114,8 +114,7 @@ def print_device_info(device_info: dict) -> None:
     if device_info["cuda_available"]:
         console.print(
             f"[blue]Device:[/blue] {device_info['device']} "
-            f"({device_info['gpu_name']}, "
-            f"{device_info['vram_total_gb']:.1f}GB VRAM)"
+            f"(GPU acceleration enabled, layers: {device_info.get('n_gpu_layers', 'all')})"
         )
     else:
-        console.print(f"[blue]Device:[/blue] {device_info['device']}")
+        console.print(f"[blue]Device:[/blue] {device_info['device']} (CPU mode)")

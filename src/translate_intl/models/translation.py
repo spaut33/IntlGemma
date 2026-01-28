@@ -20,6 +20,13 @@ class LanguageFile:
 
         return set(flatten_dict(self.data).keys())
 
+    @property
+    def is_nested(self) -> bool:
+        """Check if the JSON structure is nested."""
+        from translate_intl.utils.json_handler import is_nested_json
+
+        return is_nested_json(self.data)
+
 
 @dataclass
 class MissingKeysReport:

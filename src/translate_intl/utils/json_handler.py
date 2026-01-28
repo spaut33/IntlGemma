@@ -5,7 +5,22 @@ from copy import deepcopy
 from typing import Any
 
 
-def flatten_dict(data: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, str]:
+def is_nested_json(data: dict[str, Any]) -> bool:
+    """
+    Check if a dictionary contains any nested dictionaries.
+
+    Args:
+        data: Dictionary to check
+
+    Returns:
+        True if at least one value is a dictionary
+    """
+    return any(isinstance(v, dict) for v in data.values())
+
+
+def flatten_dict(
+    data: dict[str, Any], parent_key: str = "", sep: str = ".", nested: bool = True
+) -> dict[str, str]:
     """
     Convert nested dict to flat dict with dotted keys.
 
@@ -25,15 +40,17 @@ def flatten_dict(data: dict[str, Any], parent_key: str = "", sep: str = ".") -> 
     for key, value in data.items():
         new_key = f"{parent_key}{sep}{key}" if parent_key else key
 
-        if isinstance(value, dict):
-            items.extend(flatten_dict(value, new_key, sep=sep).items())
+        if nested and isinstance(value, dict):
+            items.extend(flatten_dict(value, new_key, sep=sep, nested=nested).items())
         else:
             items.append((new_key, str(value)))
 
     return dict(items)
 
 
-def unflatten_dict(flat_data: dict[str, str], sep: str = ".") -> dict[str, Any]:
+def unflatten_dict(
+    flat_data: dict[str, str], sep: str = ".", nested: bool = True
+) -> dict[str, Any]:
     """
     Convert flat dict with dotted keys to nested dict.
 
@@ -49,6 +66,9 @@ def unflatten_dict(flat_data: dict[str, str], sep: str = ".") -> dict[str, Any]:
     """
     result: dict[str, Any] = {}
 
+    if not nested:
+        return dict(flat_data)
+
     for flat_key, value in flat_data.items():
         parts = flat_key.split(sep)
         current = result
@@ -63,7 +83,9 @@ def unflatten_dict(flat_data: dict[str, str], sep: str = ".") -> dict[str, Any]:
     return result
 
 
-def get_nested_value(data: dict[str, Any], flat_key: str, sep: str = ".") -> Any:
+def get_nested_value(
+    data: dict[str, Any], flat_key: str, sep: str = ".", nested: bool = True
+) -> Any:
     """
     Get value from nested dict using flat key.
 
@@ -78,6 +100,9 @@ def get_nested_value(data: dict[str, Any], flat_key: str, sep: str = ".") -> Any
     Raises:
         KeyError: If key path doesn't exist
     """
+    if not nested:
+        return data[flat_key]
+
     parts = flat_key.split(sep)
     current = data
 
@@ -88,7 +113,7 @@ def get_nested_value(data: dict[str, Any], flat_key: str, sep: str = ".") -> Any
 
 
 def set_nested_value(
-    data: dict[str, Any], flat_key: str, value: Any, sep: str = "."
+    data: dict[str, Any], flat_key: str, value: Any, sep: str = ".", nested: bool = True
 ) -> dict[str, Any]:
     """
     Set value in nested dict using flat key (immutable - returns new dict).
@@ -103,6 +128,11 @@ def set_nested_value(
         New dictionary with updated value
     """
     result = deepcopy(data)
+
+    if not nested:
+        result[flat_key] = value
+        return result
+
     parts = flat_key.split(sep)
     current = result
 

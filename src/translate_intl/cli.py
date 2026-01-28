@@ -56,12 +56,22 @@ def cli():
     show_default=True,
 )
 @click.option(
-    "--quantization",
-    "-q",
-    type=click.Choice(["4bit", "8bit", "none"]),
-    default="4bit",
-    help="Model quantization (4bit recommended for 10GB-12GB GPUs)",
-    show_default=True,
+    "--flat",
+    "structure",
+    flag_value="flat",
+    help="Use flat JSON structure (no key splitting)",
+)
+@click.option(
+    "--nested",
+    "structure",
+    flag_value="nested",
+    help="Use nested JSON structure (split keys by dots)",
+)
+@click.option(
+    "--glossary-path",
+    "-g",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to glossary JSON file",
 )
 def translate_all(
     messages_dir: Path,
@@ -70,14 +80,17 @@ def translate_all(
     all_languages: bool,
     max_tokens: int,
     batch_size: int,
-    quantization: str,
+    structure: str | None = None,
+    glossary_path: Path | None = None,
 ):
     """Translate all keys to target languages."""
     try:
-        config = TranslatorConfig(
-            quantization=None if quantization == "none" else quantization
-        )
-        service = TranslationService(messages_dir, translator_config=config)
+        service = TranslationService(messages_dir)
+        nested_flag = None
+        if structure == "flat":
+            nested_flag = False
+        elif structure == "nested":
+            nested_flag = True
 
         # Determine target languages
         if all_languages:
@@ -103,6 +116,8 @@ def translate_all(
             target_langs=target_langs,
             max_tokens=max_tokens,
             batch_size=batch_size,
+            nested=nested_flag,
+            glossary_path=glossary_path,
         )
 
         console.print("\n[green bold]✓ Translation completed![/green bold]")
@@ -146,12 +161,22 @@ def translate_all(
     show_default=True,
 )
 @click.option(
-    "--quantization",
-    "-q",
-    type=click.Choice(["4bit", "8bit", "none"]),
-    default="4bit",
-    help="Model quantization (4bit recommended for 10GB-12GB GPUs)",
-    show_default=True,
+    "--flat",
+    "structure",
+    flag_value="flat",
+    help="Use flat JSON structure (no key splitting)",
+)
+@click.option(
+    "--nested",
+    "structure",
+    flag_value="nested",
+    help="Use nested JSON structure (split keys by dots)",
+)
+@click.option(
+    "--glossary-path",
+    "-g",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to glossary JSON file",
 )
 def translate_missing(
     messages_dir: Path,
@@ -160,14 +185,17 @@ def translate_missing(
     all_languages: bool,
     max_tokens: int,
     batch_size: int,
-    quantization: str,
+    structure: str | None = None,
+    glossary_path: Path | None = None,
 ):
     """Translate only missing keys to target languages."""
     try:
-        config = TranslatorConfig(
-            quantization=None if quantization == "none" else quantization
-        )
-        service = TranslationService(messages_dir, translator_config=config)
+        service = TranslationService(messages_dir)
+        nested_flag = None
+        if structure == "flat":
+            nested_flag = False
+        elif structure == "nested":
+            nested_flag = True
 
         # Determine target languages
         if all_languages:
@@ -193,6 +221,8 @@ def translate_missing(
             target_langs=target_langs,
             max_tokens=max_tokens,
             batch_size=batch_size,
+            nested=nested_flag,
+            glossary_path=glossary_path,
         )
 
         console.print("\n[green bold]✓ Translation completed![/green bold]")
@@ -231,16 +261,34 @@ def translate_missing(
     help="Output format",
     show_default=True,
 )
+@click.option(
+    "--flat",
+    "structure",
+    flag_value="flat",
+    help="Use flat JSON structure",
+)
+@click.option(
+    "--nested",
+    "structure",
+    flag_value="nested",
+    help="Use nested JSON structure",
+)
 def check(
     messages_dir: Path,
     source: str,
     target: tuple[str, ...],
     all_languages: bool,
     output_format: str,
+    structure: str | None = None,
 ):
     """Check translation completeness."""
     try:
         service = TranslationService(messages_dir)
+        nested_flag = None
+        if structure == "flat":
+            nested_flag = False
+        elif structure == "nested":
+            nested_flag = True
 
         # Determine target languages
         if all_languages:
@@ -261,7 +309,7 @@ def check(
             return
 
         reports = service.check_completeness(
-            source_lang=source, target_langs=target_langs
+            source_lang=source, target_langs=target_langs, nested=nested_flag
         )
 
         if output_format == "table":
@@ -294,70 +342,13 @@ def check(
 @cli.command()
 def languages():
     """Show supported languages."""
-    # 55+ languages supported by TranslateGemma
-    supported_languages = {
-        "en": "English",
-        "de": "German",
-        "fr": "French",
-        "es": "Spanish",
-        "it": "Italian",
-        "pt": "Portuguese",
-        "ru": "Russian",
-        "zh": "Chinese",
-        "ja": "Japanese",
-        "ko": "Korean",
-        "ar": "Arabic",
-        "hi": "Hindi",
-        "cs": "Czech",
-        "pl": "Polish",
-        "nl": "Dutch",
-        "sv": "Swedish",
-        "da": "Danish",
-        "no": "Norwegian",
-        "fi": "Finnish",
-        "tr": "Turkish",
-        "el": "Greek",
-        "he": "Hebrew",
-        "th": "Thai",
-        "vi": "Vietnamese",
-        "id": "Indonesian",
-        "ms": "Malay",
-        "ro": "Romanian",
-        "uk": "Ukrainian",
-        "bg": "Bulgarian",
-        "hr": "Croatian",
-        "sk": "Slovak",
-        "sl": "Slovenian",
-        "sr": "Serbian",
-        "et": "Estonian",
-        "lv": "Latvian",
-        "lt": "Lithuanian",
-        "hu": "Hungarian",
-        "fa": "Persian",
-        "ur": "Urdu",
-        "bn": "Bengali",
-        "ta": "Tamil",
-        "te": "Telugu",
-        "mr": "Marathi",
-        "gu": "Gujarati",
-        "kn": "Kannada",
-        "ml": "Malayalam",
-        "si": "Sinhala",
-        "km": "Khmer",
-        "lo": "Lao",
-        "my": "Burmese",
-        "ka": "Georgian",
-        "am": "Amharic",
-        "ne": "Nepali",
-        "sw": "Swahili",
-        "af": "Afrikaans",
-    }
+    from translate_intl.core.languages import LANGUAGE_MAP
 
     table = Table(title="TranslateGemma Supported Languages (55+)")
     table.add_column("Code", style="cyan", no_wrap=True)
     table.add_column("Language", style="green")
 
-    for code, name in sorted(supported_languages.items()):
+    for code, name in sorted(LANGUAGE_MAP.items()):
         table.add_row(code, name)
 
     console.print(table)

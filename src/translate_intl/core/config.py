@@ -3,8 +3,6 @@
 from dataclasses import dataclass
 from typing import Optional
 
-import torch
-
 
 @dataclass
 class TranslatorConfig:
@@ -12,8 +10,12 @@ class TranslatorConfig:
 
     model_id: str = "google/translategemma-4b-it"
     device: str = "auto"
-    torch_dtype: torch.dtype = torch.bfloat16
     max_new_tokens: int = 200
     enable_tf32: bool = True
     cache_dir: Optional[str] = None
-    quantization: Optional[str] = "4bit"  # None, "4bit", or "8bit"
+    # GGUF settings
+    gguf_model_id: str = "NikolayKozloff/translategemma-4b-it-Q8_0-GGUF"
+    gguf_filename: str = "translategemma-4b-it-q8_0.gguf"
+    n_gpu_layers: int = -1  # -1 means all layers on GPU
+    n_ctx: int = 4096
+    glossary: dict[str, str] = None

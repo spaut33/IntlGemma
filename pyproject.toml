@@ -11,10 +11,8 @@ authors = [
 dependencies = [
     "click>=8.1.7",
     "rich>=13.7.0",
-    "torch>=2.1.0",
-    "transformers>=4.38.0",
-    "accelerate>=0.26.0",
-    "bitsandbytes>=0.40.0",
+    "llama-cpp-python>=0.2.26",
+    "huggingface-hub",
 ]
 
 [project.optional-dependencies]

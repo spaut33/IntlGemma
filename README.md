@@ -20,13 +20,13 @@ The easiest way to run TranslateGemma is with Docker:
 
 ```bash
 # Build the image
-docker-compose build
+docker compose build
 
 # Translate missing keys (using convenience script)
-./docker-run.sh translate-missing ./test_messages --all-languages
+./docker-run.sh translate-missing ./messages --all-languages
 
-# Or use docker-compose directly
-docker-compose run --rm cli translate-intl translate-missing ./test_messages -t ru
+# Or use docker compose directly
+docker compose run --rm cli translate-intl translate-missing ./messages -t ru
 ```
 
 For detailed Docker usage, see [DOCKER.md](docs/DOCKER.md).
@@ -288,16 +288,6 @@ src/translate_intl/
 ├── cli.py                 # CLI interface
 └── __main__.py            # Entry point
 ```
-
-## API (Flask)
-
-The original Flask API is still available in `api.py`:
-
-```bash
-python api.py
-```
-
-See API documentation for details.
 
 ## Documentation
 

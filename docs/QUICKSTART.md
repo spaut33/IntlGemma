@@ -1,120 +1,64 @@
-# Quick Start Guide
+# Quickstart
 
-Get up and running with TranslateGemma in 5 minutes.
+Get a first translation running quickly. Choose Docker (recommended) or local.
 
 ## Prerequisites
 
-- Docker + Docker Compose
-- NVIDIA GPU with CUDA support
-- NVIDIA Container Toolkit
+- Docker Engine + Docker Compose v2 (for Docker)
+- NVIDIA Container Toolkit (for GPU acceleration in Docker)
+- Or Python 3.10+ with uv (for local)
 
-## Installation
-
-```bash
-# 1. Clone repository
-git clone <repository-url>
-cd translategemma
-
-# 2. Build image (takes 5-10 minutes first time)
-docker-compose build
-
-# 3. Test installation
-./docker-run.sh --help
-```
-
-## Your First Translation
+## Option A: Docker (recommended)
 
 ```bash
-# 1. Create test messages
-mkdir -p my_messages
-cat > my_messages/en.json << 'EOF'
+# Build the CLI image
+docker compose build cli
+
+# Create a minimal messages directory (skip if you already have one)
+mkdir -p messages
+cat > messages/en.json <<'JSON'
 {
   "hello": "Hello",
-  "world": "World",
-  "greeting": "Hello {name}!"
+  "greeting": "Hello {name}"
 }
-EOF
+JSON
 
-echo '{}' > my_messages/ru.json
+echo '{}' > messages/de.json
 
-# 2. Update docker-compose.yml to mount your directory
-# Add under cli.volumes:
-#   - ./my_messages:/app/my_messages
-
-# 3. Translate
-./docker-run.sh translate-missing ./my_messages -t ru
-
-# 4. Check result
-cat my_messages/ru.json
-```
-
-## Common Commands
-
-```bash
-# Translate missing keys to all languages
-./docker-run.sh translate-missing ./messages --all-languages
-
-# Translate specific languages
-./docker-run.sh translate-missing ./messages -t ru -t de
+# Translate missing keys
+./docker-run.sh translate-missing ./messages -t de
 
 # Check completeness
-./docker-run.sh check ./messages --all-languages
-
-# Show supported languages
-./docker-run.sh languages
-
-# Start API server
-docker-compose up -d api
+./docker-run.sh check ./messages -t de
 ```
 
-## Using Makefile (Even Easier)
+## Option B: Local (uv)
 
 ```bash
-# Build
-make build
+# Install dependencies
+uv sync
 
-# Translate test messages
-make translate-missing
-
-# Check completeness
-make check
-
-# Show languages
-make languages
-
-# Start API
-make up
-
-# Stop API
-make down
+# Run the CLI
+uv run translate-intl translate-missing ./messages -t de
+uv run translate-intl check ./messages -t de
 ```
+
+If your virtualenv is active (or you installed with pip), you can run:
+
+```bash
+translate-intl translate-missing ./messages -t de
+```
+
+## Notes
+
+- The messages directory is scanned for `*.json` files. File names are language codes.
+- Use `--all-languages` to translate every language file except the source.
+- Use `--glossary-path glossary.json` to pin specific terms.
+- Use `--flat` or `--nested` if your keys are already flat or nested.
 
 ## Next Steps
 
-- Read [DOCKER.md](DOCKER.md) for detailed Docker usage
-- Read [EXAMPLES.md](EXAMPLES.md) for real-world examples
-- Read [README.md](README.md) for complete documentation
-
-## Troubleshooting
-
-### GPU not detected
-
-```bash
-docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi
-```
-
-### Out of memory
-
-```bash
-./docker-run.sh translate-missing ./messages -t ru --batch-size 10
-```
-
-### Slow downloads
-
-Model downloads to `~/.cache/huggingface` (first run only, ~9GB).
-
-## Support
-
-- Issues: GitHub Issues
-- Examples: [EXAMPLES.md](EXAMPLES.md)
-- Docker guide: [DOCKER.md](DOCKER.md)
+- DOCKER.md for container details
+- EXAMPLES.md for workflows
+- VALIDATION.md for validation rules
+- PROJECT_STRUCTURE.md for repo layout

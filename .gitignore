@@ -26,6 +26,7 @@ env/
 messages/
 *.json.bak
 *.log
+glossary.json
 
 # Distribution / packaging
 build/
