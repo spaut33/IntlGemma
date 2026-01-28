@@ -5,4 +5,10 @@
 docker compose build cli
 
 # Run translate-intl with all arguments passed through
-docker compose run --rm cli translate-intl "$@"
+extra_args=()
+glossary_path="$(pwd)/glossary.json"
+if [ -f "$glossary_path" ]; then
+    extra_args+=("-v" "$glossary_path:/app/glossary.json:ro")
+fi
+
+docker compose run --rm "${extra_args[@]}" cli translate-intl "$@"

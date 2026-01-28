@@ -3,15 +3,14 @@
 import json
 import time
 from pathlib import Path
-from typing import Optional
 
 from rich.console import Console
 
 from translate_intl.core.config import TranslatorConfig
 from translate_intl.core.translator import TranslateGemmaEngine
-from translate_intl.models.translation import MissingKeysReport
+from translate_intl.models.translation import LanguageFile, MissingKeysReport
 from translate_intl.services.file_service import TranslationFileService
-from translate_intl.utils.json_handler import flatten_dict, unflatten_dict
+from translate_intl.utils.json_handler import flatten_dict, order_like_source
 from translate_intl.utils.progress import create_translation_progress, print_translation_summary
 from translate_intl.utils.validators import (
     format_validation_error,
@@ -25,7 +24,7 @@ class TranslationService:
     """High-level service for translating next-intl projects."""
 
     def __init__(
-        self, messages_dir: Path, translator_config: Optional[TranslatorConfig] = None
+        self, messages_dir: Path, translator_config: TranslatorConfig | None = None
     ):
         """
         Initialize translation service.
@@ -44,13 +43,54 @@ class TranslationService:
         Args:
             glossary_path: Path to glossary JSON file
         """
+        if not glossary_path.exists():
+            console.print(f"[yellow]Warning: Glossary not found: {glossary_path}[/yellow]")
+            return
+
         try:
-            with open(glossary_path, "r", encoding="utf-8") as f:
-                glossary = json.load(f)
-            self.translator.config.glossary = glossary
-            console.print(f"[green]✓[/green] Loaded glossary with {len(glossary)} terms")
-        except Exception as e:
-            console.print(f"[red]Error loading glossary from {glossary_path}: {e}[/red]")
+            content = glossary_path.read_text(encoding="utf-8")
+        except OSError as e:
+            console.print(f"[yellow]Warning: Unable to read glossary {glossary_path}: {e}[/yellow]")
+            return
+
+        try:
+            glossary = json.loads(content)
+        except json.JSONDecodeError as e:
+            console.print(f"[yellow]Warning: Invalid glossary JSON in {glossary_path}: {e}[/yellow]")
+            return
+
+        if not isinstance(glossary, dict):
+            console.print(
+                f"[yellow]Warning: Glossary must be a JSON object: {glossary_path}[/yellow]"
+            )
+            return
+
+        self.translator.config.glossary = glossary
+        console.print(f"[green]✓[/green] Loaded glossary with {len(glossary)} terms")
+
+    def _resolve_nested(self, nested: bool | None, source_file: LanguageFile) -> bool:
+        if nested is None:
+            return source_file.is_nested
+
+        if nested != source_file.is_nested:
+            flag = "--nested" if nested else "--flat"
+            structure = "nested" if source_file.is_nested else "flat"
+            console.print(
+                f"[yellow]Warning: {flag} ignored; source file is {structure}[/yellow]"
+            )
+            return source_file.is_nested
+
+        return nested
+
+    def _resolve_glossary_path(self, glossary_path: Path | None) -> Path | None:
+        if glossary_path is not None:
+            return glossary_path
+
+        default_path = Path("glossary.json")
+        if default_path.is_file():
+            return default_path
+
+        return None
 
     def translate_all(
         self,
@@ -58,8 +98,8 @@ class TranslationService:
         target_langs: list[str],
         max_tokens: int = 200,
         batch_size: int = 20,
-        nested: Optional[bool] = None,
-        glossary_path: Optional[Path] = None,
+        nested: bool | None = None,
+        glossary_path: Path | None = None,
     ) -> None:
         """
         Translate all keys to target languages.
@@ -69,19 +109,19 @@ class TranslationService:
             target_langs: List of target language codes
             max_tokens: Maximum tokens per generation
             batch_size: Number of texts to translate in one batch
-            nested: Whether to use nested structure (False for flat). If None, auto-detected.
-            glossary_path: Path to glossary JSON file (optional)
+            nested: Preferred structure. If None, auto-detected; conflicts are ignored.
+            glossary_path: Path to glossary JSON file (optional). Defaults to ./glossary.json if present.
         """
-        if glossary_path:
-            self.load_glossary(glossary_path)
+        resolved_glossary_path = self._resolve_glossary_path(glossary_path)
+        if resolved_glossary_path:
+            self.load_glossary(resolved_glossary_path)
 
         # Load model once for all languages
         self.translator.load_model(show_progress=True)
 
         source_file = self.file_service.load_language_file(source_lang)
         
-        # Use provided nested flag or auto-detect from source
-        is_nested = nested if nested is not None else source_file.is_nested
+        is_nested = self._resolve_nested(nested, source_file)
         
         flat_source = flatten_dict(source_file.data, nested=is_nested)
         all_keys = list(flat_source.keys())
@@ -104,8 +144,8 @@ class TranslationService:
         target_langs: list[str],
         max_tokens: int = 200,
         batch_size: int = 20,
-        nested: Optional[bool] = None,
-        glossary_path: Optional[Path] = None,
+        nested: bool | None = None,
+        glossary_path: Path | None = None,
     ) -> None:
         """
         Translate only missing keys to target languages.
@@ -115,25 +155,27 @@ class TranslationService:
             target_langs: List of target language codes
             max_tokens: Maximum tokens per generation
             batch_size: Number of texts to translate in one batch
-            nested: Whether to use nested structure (False for flat). If None, auto-detected.
-            glossary_path: Path to glossary JSON file (optional)
+            nested: Preferred structure. If None, auto-detected; conflicts are ignored.
+            glossary_path: Path to glossary JSON file (optional). Defaults to ./glossary.json if present.
         """
-        if glossary_path:
-            self.load_glossary(glossary_path)
+        resolved_glossary_path = self._resolve_glossary_path(glossary_path)
+        if resolved_glossary_path:
+            self.load_glossary(resolved_glossary_path)
 
         # Load model once for all languages
         self.translator.load_model(show_progress=True)
 
         source_file = self.file_service.load_language_file(source_lang)
         
-        # Use provided nested flag or auto-detect from source
-        is_nested = nested if nested is not None else source_file.is_nested
+        is_nested = self._resolve_nested(nested, source_file)
 
         for target_lang in target_langs:
             console.print(f"\n[bold cyan]Checking {target_lang}...[/bold cyan]")
 
             # Find missing keys
-            report = self.file_service.find_missing_keys(source_lang, target_lang)
+            report = self.file_service.find_missing_keys(
+                source_lang, target_lang, nested=is_nested
+            )
 
             if not report.missing_keys:
                 console.print(f"[green]✓[/green] {target_lang}: No missing keys")
@@ -178,11 +220,11 @@ class TranslationService:
         if not keys_to_translate:
             return
 
-        # Load or create target file
-        try:
+        target_path = self.file_service.messages_dir / f"{target_lang}.json"
+        if target_path.exists():
             target_file = self.file_service.load_language_file(target_lang)
             target_data = target_file.data
-        except FileNotFoundError:
+        else:
             target_file = self.file_service.create_language_file(target_lang)
             target_data = {}
 
@@ -208,6 +250,12 @@ class TranslationService:
                         target_lang=target_lang,
                         max_tokens=max_tokens,
                     )
+
+                    if len(translations) != len(batch_texts):
+                        raise ValueError(
+                            "Translation batch size mismatch: "
+                            f"expected {len(batch_texts)}, got {len(translations)}"
+                        )
 
                     # Validate and update target data
                     for key, original, translation in zip(batch_keys, batch_texts, translations):
@@ -246,7 +294,7 @@ class TranslationService:
                     progress.update(task, advance=len(batch_keys))
 
         # Save updated target file
-        target_file.data = target_data
+        target_file.data = order_like_source(source_data, target_data, nested=nested)
         self.file_service.save_language_file(target_file, backup=True)
 
         elapsed_time = time.time() - start_time
@@ -256,7 +304,7 @@ class TranslationService:
         self,
         source_lang: str,
         target_langs: list[str],
-        nested: Optional[bool] = None,
+        nested: bool | None = None,
     ) -> list[MissingKeysReport]:
         """
         Check translation completeness without translating.
@@ -264,18 +312,16 @@ class TranslationService:
         Args:
             source_lang: Source language code
             target_langs: List of target language codes
-            nested: Whether to use nested structure. If None, auto-detected.
+            nested: Preferred structure. If None, auto-detected; conflicts are ignored.
         """
         reports = []
         source_file = self.file_service.load_language_file(source_lang)
-        # We don't strictly need nested here because find_missing_keys handles it,
-        # but it's good for consistency if we want to override it.
-        # Actually file_service.find_missing_keys needs to be updated too if we want to override.
-        
+        is_nested = self._resolve_nested(nested, source_file)
+
         for target_lang in target_langs:
-            # TODO: find_missing_keys currently doesn't accept nested override, 
-            # it always uses source_file.is_nested. This is likely what we want anyway.
-            report = self.file_service.find_missing_keys(source_lang, target_lang)
+            report = self.file_service.find_missing_keys(
+                source_lang, target_lang, nested=is_nested
+            )
             reports.append(report)
 
         return reports

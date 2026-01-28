@@ -53,7 +53,7 @@ translate-intl translate-missing ./messages -t de
 
 - The messages directory is scanned for `*.json` files. File names are language codes.
 - Use `--all-languages` to translate every language file except the source.
-- Use `--glossary-path glossary.json` to pin specific terms.
+- Use `--glossary-path glossary.json` to pin specific terms (defaults to `./glossary.json` if present).
 - Use `--flat` or `--nested` if your keys are already flat or nested.
 
 ## Next Steps

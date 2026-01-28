@@ -39,6 +39,8 @@ Create a glossary JSON file:
 }
 ```
 
+If `glossary.json` exists in the current working directory, it is used automatically.
+
 Then run:
 
 ```bash

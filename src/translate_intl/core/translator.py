@@ -1,7 +1,4 @@
 import re
-import time
-from pathlib import Path
-from typing import Optional
 
 import llama_cpp
 from huggingface_hub import hf_hub_download
@@ -20,7 +17,7 @@ class TranslateGemmaEngine:
     Supports efficient batch processing to minimize GPU overhead.
     """
 
-    def __init__(self, config: Optional[TranslatorConfig] = None):
+    def __init__(self, config: TranslatorConfig | None = None):
         """
         Initialize translator without loading model.
 
@@ -143,8 +140,18 @@ class TranslateGemmaEngine:
                     relevant_terms[term] = translation
             
             if relevant_terms:
-                glossary_list = "\n".join([f"- '{term}' -> '{trans}'" for term, trans in relevant_terms.items()])
-                glossary_instruction = f"### GLOSSARY (Use these specific translations):\n{glossary_list}\n\n"
+                glossary_list = "\n".join(
+                    [f"- '{term}' -> '{trans}'" for term, trans in relevant_terms.items()]
+                )
+                glossary_instruction = (
+                    "### GLOSSARY OVERRIDES:\n"
+                    "Replace every occurrence of each source term with the target term.\n"
+                    "This overrides all other rules, including technical ID preservation, "
+                    "except placeholders and tags.\n"
+                    "Match case-insensitively and when adjacent to punctuation or possessives.\n"
+                    "\n"
+                    f"{glossary_list}\n\n"
+                )
 
         prompt_text = (
             f"You are a professional technical localization engine translating from {source_name} to {target_name}. "
@@ -170,7 +177,7 @@ class TranslateGemmaEngine:
         text: str,
         source_lang: str,
         target_lang: str,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> str:
         """
         Translate single text using GGUF engine.
@@ -184,7 +191,7 @@ class TranslateGemmaEngine:
         response = self.model(
             prompt,
             max_tokens=max_tokens,
-            stop=["<end_of_turn>", "\n\n"],
+            stop=["<end_of_turn>"],
             echo=False,
             temperature=0.1,
         )
@@ -203,7 +210,7 @@ class TranslateGemmaEngine:
         texts: list[str],
         source_lang: str,
         target_lang: str,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> list[str]:
         """
         Translate multiple texts. GGUF works best with sequential processing 
@@ -217,7 +224,7 @@ class TranslateGemmaEngine:
     def _parse_batch_result(self, result: str, expected_count: int) -> list[str]:
         return []
 
-    def get_device_info(self) -> dict:
+    def get_device_info(self) -> dict[str, str | int | bool]:
         """
         Get GPU/CPU device information.
 

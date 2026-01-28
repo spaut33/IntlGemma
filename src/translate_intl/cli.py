@@ -71,7 +71,7 @@ def cli():
     "--glossary-path",
     "-g",
     type=click.Path(exists=True, path_type=Path),
-    help="Path to glossary JSON file",
+    help="Path to glossary JSON file (defaults to ./glossary.json if present)",
 )
 def translate_all(
     messages_dir: Path,
@@ -176,7 +176,7 @@ def translate_all(
     "--glossary-path",
     "-g",
     type=click.Path(exists=True, path_type=Path),
-    help="Path to glossary JSON file",
+    help="Path to glossary JSON file (defaults to ./glossary.json if present)",
 )
 def translate_missing(
     messages_dir: Path,

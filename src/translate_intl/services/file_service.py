@@ -101,13 +101,16 @@ class TranslationFileService:
 
         return lang_file
 
-    def find_missing_keys(self, source_lang: str, target_lang: str) -> MissingKeysReport:
+    def find_missing_keys(
+        self, source_lang: str, target_lang: str, nested: bool | None = None
+    ) -> MissingKeysReport:
         """
         Find missing translation keys in target language.
 
         Args:
             source_lang: Source language code
             target_lang: Target language code
+            nested: Whether to treat keys as nested paths (defaults to source structure)
 
         Returns:
             MissingKeysReport with details
@@ -116,17 +119,20 @@ class TranslationFileService:
             FileNotFoundError: If source or target file not found
         """
         source_file = self.load_language_file(source_lang)
-        source_data_flat = flatten_dict(source_file.data, nested=source_file.is_nested)
-        
-        try:
-            target_file = self.load_language_file(target_lang)
-            target_data_flat = flatten_dict(target_file.data, nested=source_file.is_nested)
-        except FileNotFoundError:
-            # Target file doesn't exist - all keys are missing
+        is_nested = source_file.is_nested if nested is None else nested
+        source_data_flat = flatten_dict(source_file.data, nested=is_nested)
+
+        target_path = self.messages_dir / f"{target_lang}.json"
+        if not target_path.exists():
             source_keys = sorted(source_data_flat.keys())
             return MissingKeysReport(
-                target_lang=target_lang, missing_keys=source_keys, total_keys=len(source_keys)
+                target_lang=target_lang,
+                missing_keys=source_keys,
+                total_keys=len(source_keys),
             )
+
+        target_file = self.load_language_file(target_lang)
+        target_data_flat = flatten_dict(target_file.data, nested=is_nested)
 
         missing = []
         for key, source_value in source_data_flat.items():

@@ -83,6 +83,43 @@ def unflatten_dict(
     return result
 
 
+def order_like_source(
+    source: dict[str, Any], target: dict[str, Any], nested: bool = True
+) -> dict[str, Any]:
+    """
+    Reorder target keys to match the source key order.
+
+    Keys present in source follow source order. Keys missing from source are appended
+    in their original target order. When nested is True, applies recursively to
+    dict values when both source and target contain dicts.
+    """
+    if not nested:
+        ordered: dict[str, Any] = {}
+        for key in source:
+            if key in target:
+                ordered[key] = target[key]
+        for key, value in target.items():
+            if key not in source:
+                ordered[key] = value
+        return ordered
+
+    ordered: dict[str, Any] = {}
+    for key, source_value in source.items():
+        if key not in target:
+            continue
+        target_value = target[key]
+        if isinstance(source_value, dict) and isinstance(target_value, dict):
+            ordered[key] = order_like_source(source_value, target_value, nested=True)
+        else:
+            ordered[key] = target_value
+
+    for key, value in target.items():
+        if key not in source:
+            ordered[key] = value
+
+    return ordered
+
+
 def get_nested_value(
     data: dict[str, Any], flat_key: str, sep: str = ".", nested: bool = True
 ) -> Any:
