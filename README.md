@@ -1,6 +1,6 @@
 # IntlGemma CLI for next-intl
 
-CLI tool for translating next-intl projects using Google's IntlGemma model with GPU acceleration.
+CLI tool for translating next-intl projects using Google's TranslateGemma model with GPU acceleration.
 
 ## Features
 
@@ -42,7 +42,7 @@ See [DOCKER.md](docs/DOCKER.md) for complete Docker setup and usage.
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd translategemma
+cd IntlGemma
 
 # Install dependencies with uv
 uv sync
@@ -198,7 +198,7 @@ Preserves ICU placeholders in translations:
 ```
 $ translate-intl translate-missing ./messages --all-languages
 
-Loading IntlGemma model... ✓ Model loaded on cuda (NVIDIA GeForce RTX 3080, 10.0GB)
+Loading TranslateGemma model... ✓ Model loaded on cuda (NVIDIA GeForce RTX 3080, 10.0GB)
 
 Auto-discovered languages: ru, de, fr
 
@@ -276,7 +276,7 @@ ruff format src/
 src/translate_intl/
 ├── core/
 │   ├── config.py          # Configuration
-│   └── translator.py      # IntlGemma engine
+│   └── translator.py      # TranslateGemma engine
 ├── services/
 │   ├── file_service.py    # File operations
 │   └── translation_service.py  # Business logic
@@ -304,6 +304,6 @@ MIT
 
 ## Credits
 
-- Model: [Google IntlGemma](https://huggingface.co/google/translategemma-4b-it)
+- Model: [Google TranslateGemma](https://huggingface.co/google/translategemma-4b-it)
 - CLI Framework: [Click](https://click.palletsprojects.com/)
 - Terminal UI: [Rich](https://rich.readthedocs.io/)

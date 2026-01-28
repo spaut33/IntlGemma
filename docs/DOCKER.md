@@ -29,12 +29,12 @@ docker compose run --rm cli translate-intl translate-missing ./messages -t de
 ## Direct docker run
 
 ```bash
-docker build -t translategemma .
+docker build -t intlgemma .
 
 docker run --rm --gpus all \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -v $(pwd)/messages:/app/messages \
-  translategemma \
+  intlgemma \
   uv run translate-intl translate-missing ./messages -t de
 ```
 
